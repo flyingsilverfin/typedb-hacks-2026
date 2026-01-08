@@ -18,7 +18,7 @@ class SchemaDefinition:
 # Default base schema with common types
 BASE_SCHEMA = """define
   # Base attribute types
-  attribute name value string @key;
+  attribute name value string;
   attribute color value string;
   attribute material value string;
   attribute shape value string;
@@ -72,10 +72,27 @@ class SchemaGenerator:
         "date": "date",
     }
 
+    # TypeQL reserved keywords that need to be renamed
+    RESERVED_KEYWORDS = {
+        "in": "contained_in",
+        "or": "logical_or",
+        "and": "logical_and",
+        "not": "logical_not",
+        "match": "pattern_match",
+        "define": "schema_define",
+        "insert": "data_insert",
+        "delete": "data_delete",
+        "undefine": "schema_undefine",
+    }
+
     def __init__(self):
         self._defined_attributes: set[str] = set()
         self._defined_entities: set[str] = set()
         self._defined_relations: set[str] = set()
+
+    def _sanitize_name(self, name: str) -> str:
+        """Replace reserved keywords with safe alternatives."""
+        return self.RESERVED_KEYWORDS.get(name, name)
 
     def generate_initial_schema(self, analysis: AnalysisResult) -> str:
         """
@@ -87,9 +104,6 @@ class SchemaGenerator:
         Returns:
             TypeQL define statement string
         """
-        # Start with base schema
-        schema_parts = [BASE_SCHEMA.strip()]
-
         # Track what's in base schema
         self._defined_attributes = {
             "name", "color", "material", "shape", "size",
@@ -101,11 +115,15 @@ class SchemaGenerator:
             "in_front_of", "behind", "inside", "contains"
         }
 
+        # Start with base schema (without 'define' keyword yet)
+        schema_parts = ["define"]
+        schema_parts.append(BASE_SCHEMA.strip().replace("define\n  ", "  "))
+
         # Generate additional schema from analysis
-        additional = self._generate_from_analysis(analysis)
+        additional = self._generate_from_analysis(analysis, include_define=False)
         if additional:
             schema_parts.append("")
-            schema_parts.append("# Scene-specific types")
+            schema_parts.append("  # Scene-specific types")
             schema_parts.append(additional)
 
         return "\n".join(schema_parts)
@@ -125,9 +143,9 @@ class SchemaGenerator:
 
         return self._generate_from_analysis(analysis)
 
-    def _generate_from_analysis(self, analysis: AnalysisResult) -> str:
+    def _generate_from_analysis(self, analysis: AnalysisResult, include_define: bool = True) -> str:
         """Generate TypeQL from analysis schema changes."""
-        lines = ["define"]
+        lines = ["define"] if include_define else []
         has_content = False
 
         # Process schema changes in order: attributes, entities, relations, modifications
@@ -178,7 +196,13 @@ class SchemaGenerator:
     def _generate_attribute_type(self, definition: dict) -> str | None:
         """Generate attribute type definition."""
         name = definition.get("name")
-        if not name or name in self._defined_attributes:
+        if not name:
+            return None
+
+        # Sanitize name to avoid reserved keywords
+        name = self._sanitize_name(name)
+
+        if name in self._defined_attributes:
             return None
 
         value_type = definition.get("value_type", "string")
@@ -190,21 +214,40 @@ class SchemaGenerator:
     def _generate_entity_type(self, definition: dict) -> str | None:
         """Generate entity type definition."""
         name = definition.get("name")
-        if not name or name in self._defined_entities:
+        if not name:
+            return None
+
+        # Sanitize name to avoid reserved keywords
+        name = self._sanitize_name(name)
+
+        if name in self._defined_entities:
             return None
 
         parent = definition.get("parent", "physical_object")
+        # If parent is "entity", use physical_object instead
+        if parent == "entity":
+            parent = "physical_object"
+
         owns = definition.get("owns", [])
         plays = definition.get("plays", [])
 
         parts = [f"entity {name}"]
 
-        if parent and parent != "entity":
+        # Always add parent (defaults to physical_object)
+        if parent:
             parts.append(f"sub {parent}")
 
+        # Attributes already owned by physical_object - don't redeclare
+        inherited_owns = {"name", "color", "material", "shape", "size", "position_description", "scene_id"}
+
         for attr in owns:
+            # Sanitize attribute names too
+            attr = self._sanitize_name(attr)
             if attr not in self._defined_attributes:
                 # Need to define this attribute first - skip for now
+                continue
+            # Skip attributes already owned by parent
+            if attr in inherited_owns and parent == "physical_object":
                 continue
             parts.append(f"owns {attr}")
 
@@ -221,7 +264,13 @@ class SchemaGenerator:
     def _generate_relation_type(self, definition: dict) -> str | None:
         """Generate relation type definition."""
         name = definition.get("name")
-        if not name or name in self._defined_relations:
+        if not name:
+            return None
+
+        # Sanitize name to avoid reserved keywords
+        name = self._sanitize_name(name)
+
+        if name in self._defined_relations:
             return None
 
         parent = definition.get("parent", "relation")

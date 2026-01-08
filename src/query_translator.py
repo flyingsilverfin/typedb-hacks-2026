@@ -15,44 +15,44 @@ QUERY_TRANSLATION_PROMPT = """You are a TypeQL query generator for TypeDB 3.0. C
 CURRENT SCHEMA:
 {schema}
 
-TYPEQL 3.0 SYNTAX REFERENCE:
-- Match pattern: match $var isa type, has attr $a;
-- Fetch results: fetch {{ "key": $var.* }};
-- Relations: ($role: $var1, $role: $var2) isa relation_type
-- Filter by value: has attr "value" or has attr $a; $a = "value";
-- Subtype matching: $x isa! exact_type (exact) vs $x isa type (includes subtypes)
+CRITICAL SYNTAX RULES - TypeQL 3.0:
+1. ALWAYS use variables starting with $ (e.g., $obj, $n, $color)
+2. NEVER omit variables - every entity and attribute MUST have a variable
+3. Match pattern: match $var isa type, has attr $a;
+4. Fetch results: fetch {{ "key": $a }};  (fetch only attribute variables, NOT entity variables)
+5. Relations: ($role: $var1, $role: $var2) isa relation_type
+6. Subtype matching: $x isa! exact_type (exact) vs $x isa type (includes subtypes)
 
-EXAMPLE QUERIES:
+CORRECT EXAMPLES:
 
-1. "What objects are in the room?"
-match $obj isa physical_object;
-fetch {{ "object": $obj.* }};
+1. "What entities are in the scene?"
+match $obj isa physical_object, has name $n;
+fetch {{ "name": $n }};
 
 2. "What color is the chair?"
-match $c isa chair, has color $color;
-fetch {{ "chair": $c.name, "color": $color }};
+match $c isa chair, has name $n, has color $color;
+fetch {{ "name": $n, "color": $color }};
 
-3. "What is on the table?"
-match
-  $table isa table;
-  $item isa physical_object;
-  (subject: $item, reference: $table) isa on;
-fetch {{ "item_on_table": $item.* }};
+3. "What monitors are there?"
+match $m isa monitor, has name $n;
+fetch {{ "name": $n }};
 
-4. "Find all brown furniture"
-match $f isa furniture, has color "brown";
-fetch {{ "brown_furniture": $f.* }};
+4. "Find all black objects"
+match $obj isa physical_object, has name $n, has color "black";
+fetch {{ "name": $n }};
 
-5. "What is next to the sofa?"
-match
-  $sofa isa physical_object, has name $n; $n contains "sofa";
-  $other isa physical_object;
-  (item: $sofa, item: $other) isa next_to;
-fetch {{ "next_to_sofa": $other.* }};
+5. "What is the desk made of?"
+match $d isa desk, has material $mat, has name $n;
+fetch {{ "name": $n, "material": $mat }};
+
+INVALID EXAMPLES (DO NOT USE):
+- match isa physical_object;  ❌ Missing variable!
+- match $obj isa physical_object; fetch {{ "entity": $obj }};  ❌ Cannot fetch entity variable!
+- match $obj has name;  ❌ Missing variable for attribute!
 
 QUESTION: {question}
 
-Return ONLY the TypeQL query, no explanation or markdown. The query must be valid TypeQL 3.0 syntax."""
+Return ONLY the TypeQL query with correct variable usage, no explanation or markdown."""
 
 
 @dataclass
@@ -84,11 +84,19 @@ class QueryTranslator:
         """
         self.client = client
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-
-        self.anthropic = anthropic.Anthropic(api_key=self.api_key)
+        self.anthropic = None
         self.model = model
+
+    def _ensure_anthropic_client(self):
+        """Lazy initialization of Anthropic client for query translation."""
+        if self.anthropic is None:
+            if not self.api_key:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY environment variable is required for natural language query translation.\n"
+                    "Set it with: export ANTHROPIC_API_KEY=your_key_here\n"
+                    "Note: Use 'execute' command to run raw TypeQL queries without API key."
+                )
+            self.anthropic = anthropic.Anthropic(api_key=self.api_key)
 
     def translate(self, question: str, schema: str | None = None) -> str:
         """
@@ -101,6 +109,8 @@ class QueryTranslator:
         Returns:
             TypeQL query string
         """
+        self._ensure_anthropic_client()
+
         if schema is None:
             schema = self._get_schema_for_prompt()
 
@@ -124,6 +134,14 @@ class QueryTranslator:
             lines = typeql.split("\n")
             typeql = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
 
+        # Basic validation - check for variables
+        if "match" in typeql.lower() and "$" not in typeql:
+            raise ValueError(
+                f"Generated query is missing variables (no $ found):\n{typeql}\n\n"
+                f"This is likely a bug in the query generation. "
+                f"Try rephrasing your question or use the 'execute' command with a manual query."
+            )
+
         return typeql
 
     def query(self, question: str) -> QueryResult:
@@ -136,6 +154,7 @@ class QueryTranslator:
         Returns:
             QueryResult with TypeQL query and results
         """
+        typeql = ""
         try:
             typeql = self.translate(question)
 
@@ -151,7 +170,7 @@ class QueryTranslator:
         except Exception as e:
             return QueryResult(
                 question=question,
-                typeql="",
+                typeql=typeql,  # Preserve the query even on error
                 results=[],
                 success=False,
                 error=str(e)

@@ -41,11 +41,186 @@ def cli(ctx, db_address, db_name, db_user, db_password):
 @click.argument("video_path", type=click.Path(exists=True))
 @click.option("--fps", default=0.5, help="Frames to extract per second")
 @click.option("--max-frames", default=5, help="Maximum frames to extract")
+@click.option("--output", "-o", type=click.Path(), help="Save analysis to JSON file")
+@click.pass_context
+def extract(ctx, video_path, fps, max_frames, output):
+    """Extract frames and analyze with vision (no database interaction)."""
+    click.echo(f"Extracting and analyzing video: {video_path}")
+
+    # Extract frames
+    click.echo(f"\nExtracting frames ({fps} fps, max {max_frames})...")
+    processor = VideoProcessor(frames_per_second=fps, max_frames=max_frames)
+
+    try:
+        frames = processor.extract_frames(video_path)
+        click.echo(f"Extracted {len(frames)} frames")
+    except Exception as e:
+        click.echo(f"Error extracting frames: {e}", err=True)
+        sys.exit(1)
+
+    if not frames:
+        click.echo("No frames extracted from video", err=True)
+        sys.exit(1)
+
+    # Analyze with Claude
+    click.echo("\nAnalyzing frames with Claude...")
+    try:
+        analyzer = VisionAnalyzer()
+        analysis = analyzer.analyze_frames(frames, current_schema=None)
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    if analysis.raw_response and "error" in analysis.raw_response:
+        click.echo(f"Analysis error: {analysis.raw_response}", err=True)
+        sys.exit(1)
+
+    # Report findings
+    total_entities = len(analysis.new_entities) + len(analysis.pending_entities)
+    total_relations = len(analysis.new_relations) + len(analysis.pending_relations)
+    schema_changes = len(analysis.schema_changes)
+
+    click.echo(f"\n=== ANALYSIS RESULTS ===")
+    click.echo(f"Entities found: {total_entities}")
+    click.echo(f"Relations found: {total_relations}")
+    click.echo(f"Schema changes needed: {schema_changes}")
+
+    # Show entity types
+    entity_types = {}
+    for entity in analysis.pending_entities + analysis.new_entities:
+        entity_types[entity.type] = entity_types.get(entity.type, 0) + 1
+
+    if entity_types:
+        click.echo(f"\nEntity types:")
+        for etype, count in sorted(entity_types.items()):
+            click.echo(f"  - {etype}: {count}")
+
+    # Show sample entities
+    click.echo(f"\nSample entities:")
+    for entity in (analysis.pending_entities + analysis.new_entities)[:5]:
+        click.echo(f"  - {entity.id} ({entity.type}): {entity.attributes}")
+
+    # Save to file if requested
+    if output:
+        output_data = {
+            "entities": [
+                {"id": e.id, "type": e.type, "attributes": e.attributes}
+                for e in analysis.pending_entities + analysis.new_entities
+            ],
+            "relations": [
+                {"type": r.type, "from": r.from_entity, "to": r.to_entity}
+                for r in analysis.pending_relations + analysis.new_relations
+            ],
+            "schema_changes": [
+                {"type": c.change_type, "definition": c.definition}
+                for c in analysis.schema_changes
+            ]
+        }
+        Path(output).write_text(json.dumps(output_data, indent=2))
+        click.echo(f"\nAnalysis saved to: {output}")
+
+
+@cli.command()
+@click.argument("video_path", type=click.Path(exists=True))
+@click.option("--fps", default=0.5, help="Frames to extract per second")
+@click.option("--max-frames", default=5, help="Maximum frames to extract")
+@click.pass_context
+def preview(ctx, video_path, fps, max_frames):
+    """Extract, analyze, and preview TypeQL queries (no database changes)."""
+    config = ctx.obj["config"]
+    click.echo(f"Previewing video analysis: {video_path}")
+
+    # Extract frames
+    click.echo(f"\nExtracting frames ({fps} fps, max {max_frames})...")
+    processor = VideoProcessor(frames_per_second=fps, max_frames=max_frames)
+
+    try:
+        frames = processor.extract_frames(video_path)
+        click.echo(f"Extracted {len(frames)} frames")
+    except Exception as e:
+        click.echo(f"Error extracting frames: {e}", err=True)
+        sys.exit(1)
+
+    if not frames:
+        click.echo("No frames extracted from video", err=True)
+        sys.exit(1)
+
+    # Connect to get schema context
+    click.echo("\nConnecting to TypeDB for schema context...")
+    with TypeDBClient(config) as client:
+        current_schema = client.get_schema() if client.database_exists() else None
+        has_schema = current_schema is not None
+
+        # Analyze with Claude
+        click.echo("\nAnalyzing frames with Claude...")
+        try:
+            analyzer = VisionAnalyzer()
+            analysis = analyzer.analyze_frames(frames, current_schema)
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if analysis.raw_response and "error" in analysis.raw_response:
+            click.echo(f"Analysis error: {analysis.raw_response}", err=True)
+            sys.exit(1)
+
+        # Report findings
+        total_entities = len(analysis.new_entities) + len(analysis.pending_entities)
+        total_relations = len(analysis.new_relations) + len(analysis.pending_relations)
+        schema_changes = len(analysis.schema_changes)
+
+        click.echo(f"\n=== ANALYSIS RESULTS ===")
+        click.echo(f"Entities: {total_entities}")
+        click.echo(f"Relations: {total_relations}")
+        click.echo(f"Schema changes: {schema_changes}")
+
+        # Generate schema TypeQL
+        if not has_schema:
+            click.echo("\n=== INITIAL SCHEMA (would be created) ===")
+            generator = SchemaGenerator()
+            schema_typeql = generator.generate_initial_schema(analysis)
+            click.echo(schema_typeql)
+        elif schema_changes > 0:
+            click.echo("\n=== SCHEMA CHANGES (would be applied) ===")
+            migrator = SchemaMigrator(client)
+            plan = migrator.plan_migration(analysis)
+            if plan.has_changes:
+                click.echo(plan.summary())
+
+        # Preview data insertion queries
+        click.echo(f"\n=== DATA INSERTION PREVIEW ===")
+        click.echo(f"Would insert {total_entities} entities\n")
+
+        # Show all insert queries
+        scene_id = f"scene_{uuid.uuid4().hex[:8]}"
+        all_entities = analysis.pending_entities + analysis.new_entities
+
+        for i, entity in enumerate(all_entities, 1):
+            parts = [f"$e isa {entity.type}"]
+            parts.append(f'has name "{entity.id}"')
+            parts.append(f'has scene_id "{scene_id}"')
+
+            for attr_name, attr_value in entity.attributes.items():
+                if attr_name not in ("name", "scene_id"):
+                    # Escape quotes in values
+                    escaped_value = str(attr_value).replace('"', '\\"')
+                    parts.append(f'has {attr_name} "{escaped_value}"')
+
+            query = "insert\n  " + ",\n  ".join(parts) + ";"
+            click.echo(f"-- Entity {i}/{total_entities}: {entity.id}")
+            click.echo(query)
+            click.echo()
+
+
+@cli.command()
+@click.argument("video_path", type=click.Path(exists=True))
+@click.option("--fps", default=0.5, help="Frames to extract per second")
+@click.option("--max-frames", default=5, help="Maximum frames to extract")
 @click.option("--scene-id", default=None, help="Scene identifier (auto-generated if not provided)")
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm schema changes")
 @click.pass_context
-def analyze(ctx, video_path, fps, max_frames, scene_id, yes):
-    """Analyze a video and populate the database with extracted entities."""
+def load(ctx, video_path, fps, max_frames, scene_id, yes):
+    """Full pipeline: extract, analyze, and load into database."""
     config = ctx.obj["config"]
     scene_id = scene_id or f"scene_{uuid.uuid4().hex[:8]}"
 
@@ -83,8 +258,12 @@ def analyze(ctx, video_path, fps, max_frames, scene_id, yes):
 
         # Analyze with Claude
         click.echo("\nAnalyzing frames with Claude...")
-        analyzer = VisionAnalyzer()
-        analysis = analyzer.analyze_frames(frames, current_schema)
+        try:
+            analyzer = VisionAnalyzer()
+            analysis = analyzer.analyze_frames(frames, current_schema)
+        except ValueError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
 
         if analysis.raw_response and "error" in analysis.raw_response:
             click.echo(f"Analysis error: {analysis.raw_response}", err=True)
@@ -165,9 +344,8 @@ def analyze(ctx, video_path, fps, max_frames, scene_id, yes):
 
 @cli.command()
 @click.argument("question")
-@click.option("--raw", is_flag=True, help="Show raw TypeQL query")
 @click.pass_context
-def query(ctx, question, raw):
+def query(ctx, question):
     """Ask a natural language question about the scene."""
     config = ctx.obj["config"]
 
@@ -177,10 +355,21 @@ def query(ctx, question, raw):
             sys.exit(1)
 
         translator = QueryTranslator(client)
-        result = translator.query(question)
 
-        if raw or not result.success:
-            click.echo(f"TypeQL: {result.typeql}\n")
+        click.echo("Generating and executing TypeQL query...\n")
+
+        try:
+            result = translator.query(question)
+        except ValueError as e:
+            # Validation error from query generation
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        # Always show the generated TypeQL (even if empty or on error)
+        if result.typeql:
+            click.echo(f"TypeQL:\n{result.typeql}\n")
+        else:
+            click.echo("TypeQL: (no query generated)\n")
 
         if not result.success:
             click.echo(f"Error: {result.error}", err=True)
@@ -208,6 +397,10 @@ def execute(ctx, typeql):
             sys.exit(1)
 
         translator = QueryTranslator(client)
+
+        click.echo("Executing TypeQL query...\n")
+        click.echo(f"TypeQL:\n{typeql}\n")
+
         result = translator.execute_typeql(typeql)
 
         if not result.success:
@@ -259,6 +452,18 @@ def clear(ctx, yes):
             click.echo(f"Database '{config.database}' deleted.")
         else:
             click.echo(f"Database '{config.database}' did not exist.")
+
+
+@cli.command()
+@click.argument("video_path", type=click.Path(exists=True))
+@click.option("--fps", default=0.5, help="Frames to extract per second")
+@click.option("--max-frames", default=5, help="Maximum frames to extract")
+@click.option("--scene-id", default=None, help="Scene identifier (auto-generated if not provided)")
+@click.option("--yes", "-y", is_flag=True, help="Auto-confirm schema changes")
+@click.pass_context
+def analyze(ctx, video_path, fps, max_frames, scene_id, yes):
+    """Alias for 'load' command (backward compatibility)."""
+    ctx.invoke(load, video_path=video_path, fps=fps, max_frames=max_frames, scene_id=scene_id, yes=yes)
 
 
 @cli.command()

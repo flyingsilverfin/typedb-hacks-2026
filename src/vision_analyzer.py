@@ -120,11 +120,18 @@ class VisionAnalyzer:
             model: Claude model to use for analysis
         """
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY not set")
-
-        self.client = anthropic.Anthropic(api_key=self.api_key)
+        self.client = None
         self.model = model
+
+    def _ensure_client(self):
+        """Lazy initialization of Anthropic client."""
+        if self.client is None:
+            if not self.api_key:
+                raise ValueError(
+                    "ANTHROPIC_API_KEY environment variable is required for vision analysis.\n"
+                    "Set it with: export ANTHROPIC_API_KEY=your_key_here"
+                )
+            self.client = anthropic.Anthropic(api_key=self.api_key)
 
     def analyze_frames(
         self,
@@ -141,6 +148,8 @@ class VisionAnalyzer:
         Returns:
             AnalysisResult with extracted data and schema changes
         """
+        self._ensure_client()
+
         schema_text = current_schema if current_schema else "No existing schema (this is the first scene). Define all needed types."
 
         prompt = SCENE_ANALYSIS_PROMPT.format(schema=schema_text)

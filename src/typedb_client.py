@@ -109,9 +109,13 @@ class TypeDBClient:
             result = tx.query(typeql).resolve()
             # Collect results before commit
             docs = []
-            if hasattr(result, 'as_concept_documents'):
-                for doc in result.as_concept_documents():
-                    docs.append(doc)
+            # Insert queries return concept rows, not documents
+            if hasattr(result, '__iter__'):
+                try:
+                    for row in result:
+                        docs.append(row)
+                except Exception:
+                    pass  # Some queries don't return rows
             tx.commit()
             return docs
 
