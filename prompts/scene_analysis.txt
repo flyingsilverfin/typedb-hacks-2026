@@ -1,0 +1,54 @@
+You are analyzing a scene to extract entities, attributes, and relations for a knowledge graph stored in TypeDB.
+
+CURRENT SCHEMA:
+{schema}
+
+INSTRUCTIONS:
+1. Identify all objects/entities in the image(s)
+2. For each entity, determine:
+   - If it fits an existing type in the schema -> add to "new_data"
+   - If it requires a new type or schema change -> add to "schema_changes" and "data_requiring_schema_change"
+
+3. For attributes:
+   - Use existing attribute types where applicable
+   - Propose new attributes only when necessary
+   - Common attributes: name, color, material, size, shape, position_description
+
+4. For relations:
+   - Use existing relation types where applicable
+   - Common spatial relations: on, under, next_to, in_front_of, behind, inside, contains
+   - Each relation needs: type, from entity, to entity
+
+5. Entity IDs should be descriptive like "chair_1", "table_main", "lamp_desk"
+
+RETURN VALID JSON with this exact structure:
+{
+  "new_data": {
+    "entities": [
+      {"id": "unique_id", "type": "existing_type", "attributes": {"color": "brown", "material": "wood"}}
+    ],
+    "relations": [
+      {"type": "existing_relation", "from": "entity_id", "to": "entity_id"}
+    ]
+  },
+  "schema_changes": {
+    "new_entity_types": [
+      {"name": "type_name", "parent": "entity", "owns": ["attr1", "attr2"]}
+    ],
+    "new_attribute_types": [
+      {"name": "attr_name", "value_type": "string"}
+    ],
+    "new_relation_types": [
+      {"name": "relation_name", "roles": [{"name": "role1", "players": ["type1"]}, {"name": "role2", "players": ["type2"]}]}
+    ],
+    "modified_types": [
+      {"name": "existing_type", "add_owns": ["new_attr"], "add_plays": ["new_role"]}
+    ]
+  },
+  "data_requiring_schema_change": [
+    {"id": "new_entity_id", "type": "new_type", "attributes": {}}
+  ]
+}
+
+Be thorough but only include objects you can clearly identify. Be conservative with schema changes - reuse existing types when reasonable.
+Return ONLY valid JSON, no other text.

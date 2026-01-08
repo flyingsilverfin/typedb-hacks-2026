@@ -1,0 +1,24 @@
+=====================================================================================
+     ________ __      __ _____    _______  _____    _____       _______  _______
+    |__    __|\  \  /  /|   _  \ |   _   ||   _  \ |   _  \    |   _   ||   _   |
+       |  |    \  \/  / |  | |  ||  | |__||  | |  ||  | |  |   |  | |  ||  | |__|
+       |  |     \    /  |  |/  / |  |___  |  | |  ||  |/  /    |  | |__||  |___
+       |  |      |  |   |   __/  |   ___| |  | |  ||   _  \    |  |  __ |   ___|
+       |  |      |  |   |  |     |  |  __ |  | |  ||  | |  |   |  | |  ||  |  __
+       |  |      |  |   |  |     |  |_|  ||  |/  / |  |/  /    |  |_|  ||  |_|  |
+       |__|      |__|   |__|     |_______||_____/  |_____/     |_______||_______|
+
+=====================================================================================
+WARNING: Diagnostics monitoring server could not get initialised on 
+Running TypeDB CE 3.7.2
+0 in development mode.
+.0.0.0:4104: 'error creating server listener: Serving gRPC on 0.0.0.0:1729 and HTTP on 0.0.0.0:8000 without TLS.
+WARNING: TLS NOT ENABLED. This means connections are insecure and transmit username/password credentials unencrypted over the network.
+Address already in use**To allow driver connections, drivers must also be configured to *not* use TLS**
+ (os error 
+98)'
+2026-01-08T10:53:54.595508Z  INFO ThreadId(01) server/lib.rs:253: 
+Ready!
+Exited with error: [SRO11] Could not serve gRPC on 0.0.0.0:1729.
+Cause: 
+      tonic::transport::Error(Transport, Os { code: 98, kind: AddrInUse, message: "Address already in use" })
