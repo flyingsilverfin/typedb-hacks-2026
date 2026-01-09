@@ -167,12 +167,26 @@ Convert this natural language question to a TypeQL query:
 QUESTION: {question}
 
 INSTRUCTIONS:
-1. Analyze the question to identify: entities, attributes, relations, filters, aggregations
-2. Build the match pattern with proper variables
-3. Add stream control (select/sort/limit) if needed
-4. Add reduce stage if aggregation is needed
-5. Build the fetch structure for output
-6. Return ONLY the TypeQL query - no explanation, no markdown formatting
+1. **USE SCHEMA TYPES SEMANTICALLY** - Don't guess attribute values!
+   - If question asks "What monitors are there?" → Use `$x isa monitor` (entity type from schema)
+   - If question asks "What is on the desk?" → Use `on (subject: $x, reference: $desk)` (relation type from schema)
+   - If question asks "What chairs are there?" → Use `$x isa chair` (not "has type 'chair'")
+
+2. **Prioritize semantic types over attribute filtering:**
+   - First check if question words match entity types, relation types, or role names in schema
+   - Only filter by attributes when question explicitly mentions attribute values (e.g., "black monitors", "wooden chairs")
+
+3. Analyze the question to identify: entities, attributes, relations, filters, aggregations
+
+4. Build the match pattern with proper variables
+
+5. Add stream control (select/sort/limit) if needed
+
+6. Add reduce stage if aggregation is needed
+
+7. Build the fetch structure for output
+
+8. Return ONLY the TypeQL query - no explanation, no markdown formatting
 
 Return the query now:"""
 
