@@ -1,5 +1,15 @@
 # typedb-hacks-2026
-TypeDB 2026 hackathon
+TypeDB 2026 hackathon - Video Scene Analysis to Knowledge Graph
+
+This project uses Claude's vision capabilities to extract entities and spatial relationships from video scenes and stores them in a TypeDB knowledge graph for semantic querying.
+
+## Example Output
+
+See [example_output.md](example_output.md) for a complete walkthrough of analyzing a short office scene video (~3-4 seconds, scanning across an office with 2 people seated at desks). The example shows:
+- 19 entities extracted (people, monitors, laptops, furniture, office equipment)
+- 18 spatial relations identified (sitting_on, on, under, next_to, etc.)
+- Complete TypeDB schema generation
+- Sample queries to explore the knowledge graph
 
 ## Setup
 
