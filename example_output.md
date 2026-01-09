@@ -288,13 +288,65 @@ The knowledge graph is now ready for querying! Example queries:
 
 ```bash
 # Find all monitors
-python3 main.py query "What monitors are there?"
+>> python3 main.py query "What monitors are there?"
+
+
+First few results:
+  1. {'name': 'monitor_left'}
+  2. {'name': 'monitor_center'}
+  3. {'name': 'monitor_right'}
+
+TypeQL:
+match
+  $monitor isa monitor;
+fetch {
+  "name": $monitor.name
+};
+
+Found 3 results:
+
+1. {
+  "name": "monitor_left"
+}
+2. {
+  "name": "monitor_center"
+}
+3. {
+  "name": "monitor_right"
+}
+
 
 # Find what's on the desk
-python3 main.py query "What objects are on the desk?"
+>> python3 main.py query "What objects are on the desk?"
+
+### Note: bad outcome! Better outcome would have used `match $desk isa desk;`, which would have actually found data!
+
+TypeQL:
+match
+  $desk isa physical_object, has name "desk";
+  $object isa physical_object, has name $obj_name;
+  on (subject: $object, reference: $desk);
+fetch { "object": $obj_name };
+
+No results found.
+
+
 
 # Find people in the scene
-python3 main.py query "How many people are in the scene?"
+>> python3 main.py query "How many people are in the scene?"
+
+TypeQL:
+match
+  $person isa person;
+reduce $count = count;
+fetch { "total": $count };
+
+Found 1 results:
+
+1. {
+  "total": 2
+}
+
 
 # Find spatial relationships
 python3 main.py query "What is the person on the right wearing?"
