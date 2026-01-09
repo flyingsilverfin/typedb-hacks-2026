@@ -25,8 +25,9 @@ from src.query_translator import QueryTranslator
 @click.option("--db-name", default="scene_graph", help="Database name")
 @click.option("--db-user", default="admin", help="Database username")
 @click.option("--db-password", default="password", help="Database password")
+@click.option("--debug", is_flag=True, help="Enable verbose debug logging")
 @click.pass_context
-def cli(ctx, db_address, db_name, db_user, db_password):
+def cli(ctx, db_address, db_name, db_user, db_password, debug):
     """Scene Graph - Visual Scene Understanding with TypeDB"""
     ctx.ensure_object(dict)
     ctx.obj["config"] = TypeDBConfig(
@@ -35,6 +36,7 @@ def cli(ctx, db_address, db_name, db_user, db_password):
         username=db_user,
         password=db_password
     )
+    ctx.obj["debug"] = debug
 
 
 @cli.command()
@@ -64,8 +66,9 @@ def extract(ctx, video_path, fps, max_frames, output):
 
     # Analyze with Claude
     click.echo("\nAnalyzing frames with Claude...")
+    debug = ctx.obj.get("debug", False)
     try:
-        analyzer = VisionAnalyzer()
+        analyzer = VisionAnalyzer(debug=debug)
         analysis = analyzer.analyze_frames(frames, current_schema=None)
     except ValueError as e:
         click.echo(f"Error: {e}", err=True)
@@ -99,6 +102,17 @@ def extract(ctx, video_path, fps, max_frames, output):
     click.echo(f"\nSample entities:")
     for entity in (analysis.pending_entities + analysis.new_entities)[:5]:
         click.echo(f"  - {entity.id} ({entity.type}): {entity.attributes}")
+
+    # Show relations
+    all_relations = analysis.new_relations + analysis.pending_relations
+    if all_relations:
+        click.echo(f"\nRelations ({len(all_relations)}):")
+        for relation in all_relations[:10]:
+            click.echo(f"  - {relation.from_entity} --[{relation.type}]--> {relation.to_entity}")
+        if len(all_relations) > 10:
+            click.echo(f"  ... and {len(all_relations) - 10} more")
+    else:
+        click.echo(f"\nNo relations found.")
 
     # Save to file if requested
     if output:
@@ -147,14 +161,15 @@ def preview(ctx, video_path, fps, max_frames):
 
     # Connect to get schema context
     click.echo("\nConnecting to TypeDB for schema context...")
-    with TypeDBClient(config) as client:
+    debug = ctx.obj.get("debug", False)
+    with TypeDBClient(config, debug=debug) as client:
         current_schema = client.get_schema() if client.database_exists() else None
         has_schema = current_schema is not None
 
         # Analyze with Claude
         click.echo("\nAnalyzing frames with Claude...")
         try:
-            analyzer = VisionAnalyzer()
+            analyzer = VisionAnalyzer(debug=debug)
             analysis = analyzer.analyze_frames(frames, current_schema)
         except ValueError as e:
             click.echo(f"Error: {e}", err=True)
@@ -244,7 +259,8 @@ def load(ctx, video_path, fps, max_frames, scene_id, yes):
 
     # Connect to TypeDB
     click.echo("\nConnecting to TypeDB...")
-    with TypeDBClient(config) as client:
+    debug = ctx.obj.get("debug", False)
+    with TypeDBClient(config, debug=debug) as client:
         is_new_db = client.ensure_database()
 
         if is_new_db:
@@ -259,7 +275,7 @@ def load(ctx, video_path, fps, max_frames, scene_id, yes):
         # Analyze with Claude
         click.echo("\nAnalyzing frames with Claude...")
         try:
-            analyzer = VisionAnalyzer()
+            analyzer = VisionAnalyzer(debug=debug)
             analysis = analyzer.analyze_frames(frames, current_schema)
         except ValueError as e:
             click.echo(f"Error: {e}", err=True)
@@ -348,13 +364,14 @@ def load(ctx, video_path, fps, max_frames, scene_id, yes):
 def query(ctx, question):
     """Ask a natural language question about the scene."""
     config = ctx.obj["config"]
+    debug = ctx.obj.get("debug", False)
 
-    with TypeDBClient(config) as client:
+    with TypeDBClient(config, debug=debug) as client:
         if not client.database_exists():
             click.echo(f"Database '{config.database}' does not exist. Run 'analyze' first.", err=True)
             sys.exit(1)
 
-        translator = QueryTranslator(client)
+        translator = QueryTranslator(client, debug=debug)
 
         click.echo("Generating and executing TypeQL query...\n")
 
@@ -390,13 +407,14 @@ def query(ctx, question):
 def execute(ctx, typeql):
     """Execute a raw TypeQL query."""
     config = ctx.obj["config"]
+    debug = ctx.obj.get("debug", False)
 
-    with TypeDBClient(config) as client:
+    with TypeDBClient(config, debug=debug) as client:
         if not client.database_exists():
             click.echo(f"Database '{config.database}' does not exist.", err=True)
             sys.exit(1)
 
-        translator = QueryTranslator(client)
+        translator = QueryTranslator(client, debug=debug)
 
         click.echo("Executing TypeQL query...\n")
         click.echo(f"TypeQL:\n{typeql}\n")
@@ -421,8 +439,9 @@ def execute(ctx, typeql):
 def schema(ctx):
     """Show the current database schema."""
     config = ctx.obj["config"]
+    debug = ctx.obj.get("debug", False)
 
-    with TypeDBClient(config) as client:
+    with TypeDBClient(config, debug=debug) as client:
         if not client.database_exists():
             click.echo(f"Database '{config.database}' does not exist.", err=True)
             sys.exit(1)
@@ -441,13 +460,14 @@ def schema(ctx):
 def clear(ctx, yes):
     """Clear the database (delete and recreate)."""
     config = ctx.obj["config"]
+    debug = ctx.obj.get("debug", False)
 
     if not yes:
         if not click.confirm(f"Delete database '{config.database}'? This cannot be undone."):
             click.echo("Aborted.")
             return
 
-    with TypeDBClient(config) as client:
+    with TypeDBClient(config, debug=debug) as client:
         if client.delete_database():
             click.echo(f"Database '{config.database}' deleted.")
         else:
@@ -471,12 +491,13 @@ def analyze(ctx, video_path, fps, max_frames, scene_id, yes):
 def info(ctx):
     """Show database information."""
     config = ctx.obj["config"]
+    debug = ctx.obj.get("debug", False)
 
     click.echo(f"TypeDB Address: {config.address}")
     click.echo(f"Database: {config.database}")
 
     try:
-        with TypeDBClient(config) as client:
+        with TypeDBClient(config, debug=debug) as client:
             if client.database_exists():
                 click.echo("Status: Connected")
 

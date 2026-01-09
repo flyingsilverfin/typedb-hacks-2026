@@ -124,6 +124,56 @@ Using Python 3.12 with venv at `./venv/`
   - Removed duplicate `owns` clauses from inherited attributes
   - Fixed TypeQL fetch syntax to avoid `type()` function
 
+### 2026-01-08: Improved relation extraction
+- **Major improvement to vision analysis prompt for relation extraction**
+- Added emphasis: "RELATIONS are as important as entities!"
+- Expanded relation section with detailed examples of spatial relations
+- Added concrete examples: laptop on desk, person sits in chair, monitor next to monitor
+- Added "IMPORTANT REMINDERS" section with relation extraction guidelines
+- Updated JSON structure to support relations in `data_requiring_schema_change`
+- Updated parser to handle both entities and relations that need schema changes
+- Added relation display in `extract` command output
+- **Result**: Tested and now extracting 21 relations from office scene (previously 0)
+
+### 2026-01-09: Fixed relation insertion errors
+- **Issue**: Relations were failing to insert with type inference errors
+  - Error: "Type-inference was unable to find compatible types... across a 'links' constraint"
+  - Cause: New relation types (sitting_on, attached_to) were being defined with custom roles, but data inserter used default subject/reference roles
+- **Fix**: Made all new spatial relations inherit from `spatial_relation`
+  - Updated vision analyzer prompt: new relation types should specify `"parent": "spatial_relation"` instead of defining custom roles
+  - Updated schema generator: skip role definitions when parent is `spatial_relation` (roles are inherited)
+  - This ensures all spatial relations use the standard subject/reference roles consistently
+- Schema pattern now: `relation sitting_on sub spatial_relation;` (inherits subject/reference roles from parent)
+
+### 2026-01-09: Enhanced query translation prompt
+- **Improvement**: Dramatically expanded TypeQL query generation prompt
+- **Source**: Incorporated official TypeQL 3.0 reference from https://typedb.com/docs/llms-short.txt
+- **Content added**:
+  - Complete syntax rules and reserved keywords
+  - Query pipeline stages (match, fetch, reduce, insert, delete, update, put)
+  - Stream control operators (select, sort, limit, offset)
+  - Pattern construction (basic patterns, logical operators, comparison operators)
+  - Common query patterns with examples
+  - Critical rules for query generation with ✅/❌ examples
+  - Aggregation and grouping examples
+  - Relation query patterns (both anonymous and variablized forms)
+- **Result**: Prompt expanded from ~70 lines to ~180 lines with comprehensive TypeQL 3.0 reference
+
+### 2026-01-09: Added debug mode
+- **Feature**: Global `--debug` flag for verbose logging
+- **Usage**: `python3 main.py --debug <command>`
+- **What it logs**:
+  - **Vision Analyzer**: Full prompt text sent to Claude, number of images, model parameters, full response text, token usage, stop reason
+  - **Query Translator**: Natural language question, full prompt with schema, generated TypeQL, token usage, stop reason
+  - **TypeDB Client**: All TypeQL queries (schema, read, write) with full text, result counts, sample results
+- **Benefits**:
+  - Debug prompt engineering issues
+  - See exactly what's being sent to Claude API
+  - Inspect generated TypeQL before execution
+  - Verify database operations
+  - No truncation - see complete prompts and responses
+- **Implementation**: Added debug parameter to VisionAnalyzer, QueryTranslator, and TypeDBClient classes
+
 ### 2026-01-08: Project cleanup
 - Added comprehensive .gitignore file
   - Ignores: venv, __pycache__, *.log, bin/, .DS_Store, IDE files
@@ -132,6 +182,8 @@ Using Python 3.12 with venv at `./venv/`
 
 ### 2026-01-08: Query validation and improvements
 - Improved TypeQL query generation prompt with explicit syntax rules
+- Fixed relation syntax in prompt: `relation_type ($role: $var1, $role: $var2);` or `$rel isa relation_type (...);`
+- Added relation query examples to prompt
 - Added validation to detect malformed queries (missing variables)
 - Better error messages when query generation fails
 - Invalid queries are caught before being sent to database

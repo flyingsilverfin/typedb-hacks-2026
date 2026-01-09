@@ -21,8 +21,9 @@ class TypeDBConfig:
 class TypeDBClient:
     """Wrapper for TypeDB database operations using TypeDB 3.x API."""
 
-    def __init__(self, config: TypeDBConfig | None = None):
+    def __init__(self, config: TypeDBConfig | None = None, debug: bool = False):
         self.config = config or TypeDBConfig()
+        self.debug = debug
         self._driver = None
 
     def connect(self):
@@ -99,12 +100,31 @@ class TypeDBClient:
 
     def execute_schema(self, typeql: str) -> None:
         """Execute a schema query (define/redefine/undefine)."""
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: TYPEDB CLIENT - EXECUTE SCHEMA")
+            print("="*80)
+            print("TypeQL query:")
+            print(typeql)
+            print("="*80 + "\n")
+
         with self.schema_transaction() as tx:
             tx.query(typeql).resolve()
             tx.commit()
 
+        if self.debug:
+            print("DEBUG: Schema query executed successfully\n")
+
     def execute_write(self, typeql: str) -> list[dict]:
         """Execute a write query (insert/update/delete)."""
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: TYPEDB CLIENT - EXECUTE WRITE")
+            print("="*80)
+            print("TypeQL query:")
+            print(typeql)
+            print("="*80 + "\n")
+
         with self.write_transaction() as tx:
             result = tx.query(typeql).resolve()
             # Collect results before commit
@@ -117,16 +137,37 @@ class TypeDBClient:
                 except Exception:
                     pass  # Some queries don't return rows
             tx.commit()
+
+            if self.debug:
+                print(f"DEBUG: Write query executed successfully ({len(docs)} results)\n")
+
             return docs
 
     def execute_read(self, typeql: str) -> list[dict]:
         """Execute a read query (match + fetch)."""
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: TYPEDB CLIENT - EXECUTE READ")
+            print("="*80)
+            print("TypeQL query:")
+            print(typeql)
+            print("="*80 + "\n")
+
         with self.read_transaction() as tx:
             result = tx.query(typeql).resolve()
             docs = []
             if hasattr(result, 'as_concept_documents'):
                 for doc in result.as_concept_documents():
                     docs.append(doc)
+
+            if self.debug:
+                print(f"DEBUG: Read query executed successfully ({len(docs)} results)")
+                if docs:
+                    print("\nFirst few results:")
+                    for i, doc in enumerate(docs[:3], 1):
+                        print(f"  {i}. {doc}")
+                print()
+
             return docs
 
     def get_schema(self) -> str | None:

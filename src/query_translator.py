@@ -10,49 +10,171 @@ import anthropic
 from .typedb_client import TypeDBClient
 
 
-QUERY_TRANSLATION_PROMPT = """You are a TypeQL query generator for TypeDB 3.0. Convert natural language questions to TypeQL queries.
+QUERY_TRANSLATION_PROMPT = """You are a TypeQL 3.0 query generator for TypeDB. Convert natural language questions to TypeQL queries.
 
-CURRENT SCHEMA:
+# TYPEQL 3.0 REFERENCE
+
+## Core Syntax Rules
+- ALL variables must start with $ (e.g., $user, $name, $age)
+- Comments start with # and continue to end of line
+- Statements end with semicolons
+- Relations use: relation_type (role: $player, role: $player); OR $rel isa relation_type, links (role: $player);
+
+## Reserved Keywords (NEVER use as identifiers):
+with, match, fetch, update, define, undefine, redefine, insert, put, delete, end, entity, relation, attribute, role, asc, desc, struct, fun, return, alias, sub, owns, as, plays, relates, iid, isa, links, has, is, or, not, try, in, true, false, of, from, first, last
+
+## Query Pipeline Stages
+
+### Match Stage - Find Data
+Syntax: match <pattern>;
+Example:
+match
+  $user isa user, has username "user_0";
+  friendship (friend: $user, friend: $friend);
+
+### Fetch Stage - Retrieve and Format Data
+Syntax: fetch {{ <structure> }};
+Features:
+- JSON-like nested structures
+- Attribute access: $var.attribute_name for single value, [$var.attribute_name] for multiple values
+- All attributes: {{ $var.* }}
+- Subqueries: [] for multiple results, () for single result
+
+Example:
+fetch {{
+  "name": $user.username,
+  "all_attrs": {{ $user.* }},
+  "emails": [$user.email]
+}};
+
+### Stream Control Operators
+- select $var1, $var2; - Filter which variables to return
+- sort $var [asc/desc]; - Order results
+- limit <number>; - Restrict result count
+- offset <number>; - Skip first N results
+
+### Reduce Stage - Aggregations
+Syntax: reduce $result = <function> [groupby $vars];
+Functions: count, sum, mean, max, min
+Example:
+reduce $friend_count = count groupby $user;
+
+## Pattern Construction
+
+### Basic Data Patterns
+- Type assertion: $x isa person;
+- Attribute ownership: $x has name $n; OR $x has name "John";
+- Anonymous relation: friendship (friend: $x, friend: $y);
+- Variablized relation: $rel isa friendship, links (friend: $x, friend: $y);
+- Value comparison: $age > 25;
+- Concept equality: $x is $y;
+
+### Logical Operators
+- Conjunction: and (implicit with ; or ,)
+- Disjunction: {{pattern}} or {{pattern}}
+- Negation: not {{ pattern }}
+- Optionality: try {{ pattern }}
+
+### Comparison Operators
+Equality: =, !=
+Ordering: <, <=, >, >=
+Pattern matching: like, contains
+
+## Common Query Patterns
+
+### Find entities by type and attribute
+match
+  $obj isa entity_type, has attribute_name $value;
+fetch {{ "value": $value }};
+
+### Find entities with specific attribute value
+match
+  $obj isa entity_type, has name $n, has color "red";
+fetch {{ "name": $n }};
+
+### Query relations (anonymous form - when you don't need the relation variable)
+match
+  $subject isa subject_type, has name $subj_name;
+  $reference isa reference_type, has name $ref_name;
+  relation_type (subject_role: $subject, reference_role: $reference);
+fetch {{ "from": $subj_name, "to": $ref_name }};
+
+### Query relations (variablized form - when you need the relation variable)
+match
+  $subject isa subject_type, has name $subj_name;
+  $reference isa reference_type, has name $ref_name;
+  $rel isa relation_type, links (subject_role: $subject, reference_role: $reference);
+fetch {{ "from": $subj_name, "to": $ref_name }};
+
+### Count aggregation
+match
+  $obj isa entity_type;
+reduce $count = count;
+fetch {{ "total": $count }};
+
+### Count with grouping
+match
+  $obj isa entity_type, has category $cat;
+reduce $count = count groupby $cat;
+fetch {{ "category": $cat, "count": $count }};
+
+### Sorting and limiting
+match
+  $obj isa entity_type, has name $n, has score $s;
+sort $s desc;
+limit 10;
+fetch {{ "name": $n, "score": $s }};
+
+### Subtype querying
+match
+  $obj isa parent_type;  # Includes all subtypes
+fetch {{ "name": $obj.name }};
+
+## Critical Rules for Query Generation
+
+1. **ALWAYS use variables** - Never omit $ prefix
+   ❌ match isa person;
+   ✅ match $p isa person;
+
+2. **ALWAYS use variables for attributes in match**
+   ❌ match $p has name;
+   ✅ match $p has name $n;
+
+3. **ONLY fetch attribute variables, NOT entity/relation variables**
+   ❌ fetch {{ "person": $p }};
+   ✅ fetch {{ "name": $p.name }};
+   ✅ fetch {{ "name": $n }};  (if $n was bound with has name $n)
+
+4. **Use correct relation syntax**
+   ✅ relation_type (role: $var1, role: $var2);
+   ✅ $rel isa relation_type, links (role: $var1, role: $var2);
+   ❌ ($role: $var1, $role: $var2) isa relation_type;  (TypeQL 2.0 syntax - wrong!)
+
+5. **Separate multiple has clauses**
+   ✅ $p has name $n, has age $a;
+   ✅ $p has name $n; $p has age $a;
+
+6. **Use fetch for output, not select (unless you need to filter variables)**
+   - select: Filters which variables flow through pipeline
+   - fetch: Formats final output as JSON
+
+# CURRENT SCHEMA
 {schema}
 
-CRITICAL SYNTAX RULES - TypeQL 3.0:
-1. ALWAYS use variables starting with $ (e.g., $obj, $n, $color)
-2. NEVER omit variables - every entity and attribute MUST have a variable
-3. Match pattern: match $var isa type, has attr $a;
-4. Fetch results: fetch {{ "key": $a }};  (fetch only attribute variables, NOT entity variables)
-5. Relations: ($role: $var1, $role: $var2) isa relation_type
-6. Subtype matching: $x isa! exact_type (exact) vs $x isa type (includes subtypes)
-
-CORRECT EXAMPLES:
-
-1. "What entities are in the scene?"
-match $obj isa physical_object, has name $n;
-fetch {{ "name": $n }};
-
-2. "What color is the chair?"
-match $c isa chair, has name $n, has color $color;
-fetch {{ "name": $n, "color": $color }};
-
-3. "What monitors are there?"
-match $m isa monitor, has name $n;
-fetch {{ "name": $n }};
-
-4. "Find all black objects"
-match $obj isa physical_object, has name $n, has color "black";
-fetch {{ "name": $n }};
-
-5. "What is the desk made of?"
-match $d isa desk, has material $mat, has name $n;
-fetch {{ "name": $n, "material": $mat }};
-
-INVALID EXAMPLES (DO NOT USE):
-- match isa physical_object;  ❌ Missing variable!
-- match $obj isa physical_object; fetch {{ "entity": $obj }};  ❌ Cannot fetch entity variable!
-- match $obj has name;  ❌ Missing variable for attribute!
+# YOUR TASK
+Convert this natural language question to a TypeQL query:
 
 QUESTION: {question}
 
-Return ONLY the TypeQL query with correct variable usage, no explanation or markdown."""
+INSTRUCTIONS:
+1. Analyze the question to identify: entities, attributes, relations, filters, aggregations
+2. Build the match pattern with proper variables
+3. Add stream control (select/sort/limit) if needed
+4. Add reduce stage if aggregation is needed
+5. Build the fetch structure for output
+6. Return ONLY the TypeQL query - no explanation, no markdown formatting
+
+Return the query now:"""
 
 
 @dataclass
@@ -72,7 +194,8 @@ class QueryTranslator:
         self,
         client: TypeDBClient,
         api_key: str | None = None,
-        model: str = "claude-sonnet-4-20250514"
+        model: str = "claude-sonnet-4-20250514",
+        debug: bool = False
     ):
         """
         Initialize query translator.
@@ -81,11 +204,13 @@ class QueryTranslator:
             client: TypeDB client for executing queries
             api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
             model: Claude model to use
+            debug: Enable verbose debug logging
         """
         self.client = client
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self.anthropic = None
         self.model = model
+        self.debug = debug
 
     def _ensure_anthropic_client(self):
         """Lazy initialization of Anthropic client for query translation."""
@@ -119,6 +244,17 @@ class QueryTranslator:
             question=question
         )
 
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: QUERY TRANSLATOR - PROMPT TO CLAUDE")
+            print("="*80)
+            print(f"Model: {self.model}")
+            print(f"Max tokens: 1024")
+            print(f"Question: {question}")
+            print("\nFull prompt:")
+            print(prompt)
+            print("="*80 + "\n")
+
         response = self.anthropic.messages.create(
             model=self.model,
             max_tokens=1024,
@@ -128,6 +264,16 @@ class QueryTranslator:
         )
 
         typeql = response.content[0].text.strip()
+
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: QUERY TRANSLATOR - RESPONSE FROM CLAUDE")
+            print("="*80)
+            print(f"Stop reason: {response.stop_reason}")
+            print(f"Usage: {response.usage}")
+            print("\nGenerated TypeQL:")
+            print(typeql)
+            print("="*80 + "\n")
 
         # Clean up any markdown formatting
         if typeql.startswith("```"):

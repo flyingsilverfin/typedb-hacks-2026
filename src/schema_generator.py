@@ -281,9 +281,12 @@ class SchemaGenerator:
         if parent and parent != "relation":
             parts.append(f"sub {parent}")
 
-        for role in roles:
-            role_name = role.get("name") if isinstance(role, dict) else role
-            parts.append(f"relates {role_name}")
+        # Only add role definitions if not inheriting from spatial_relation
+        # (spatial_relation already defines subject/reference roles)
+        if parent != "spatial_relation":
+            for role in roles:
+                role_name = role.get("name") if isinstance(role, dict) else role
+                parts.append(f"relates {role_name}")
 
         self._defined_relations.add(name)
 

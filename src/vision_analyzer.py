@@ -52,7 +52,7 @@ class AnalysisResult:
     raw_response: dict[str, Any] | None = None
 
 
-SCENE_ANALYSIS_PROMPT = """You are analyzing a scene to extract entities, attributes, and relations for a knowledge graph stored in TypeDB.
+SCENE_ANALYSIS_PROMPT = """You are analyzing a scene to extract entities, attributes, and SPATIAL RELATIONS for a knowledge graph stored in TypeDB.
 
 CURRENT SCHEMA:
 {schema}
@@ -68,10 +68,28 @@ INSTRUCTIONS:
    - Propose new attributes only when necessary
    - Common attributes: name, color, material, size, shape, position_description
 
-4. For relations:
-   - Use existing relation types where applicable
-   - Common spatial relations: on, under, next_to, in_front_of, behind, inside, contains
-   - Each relation needs: type, from entity, to entity
+4. For RELATIONS (CRITICAL - DO NOT SKIP):
+   RELATIONS are as important as entities! Carefully identify spatial relationships between objects.
+
+   Common spatial relations to look for:
+   - on: object is placed on top of a surface (laptop on desk, cup on table)
+   - under: object is underneath another (box under table, tower under desk)
+   - next_to: objects are adjacent/beside each other (chair next to desk)
+   - in_front_of: object is in front of another from viewer perspective
+   - behind: object is behind another
+   - inside/contains: object is contained within another (items in box, books in shelf)
+   - attached_to: object is physically attached (lamp attached to wall)
+   - sits_in/sitting_on: person is sitting in/on furniture
+
+   For EACH relation:
+   - Specify: type, from (subject entity ID), to (reference entity ID)
+   - Use existing relation types when available in schema
+   - If new relation type needed, define it in schema_changes as a subtype of spatial_relation (this inherits the standard subject/reference roles)
+
+   EXAMPLES of good relations:
+   - laptop on desk: {{"type": "on", "from": "laptop_1", "to": "desk_main"}}
+   - person sits in chair: {{"type": "sitting_on", "from": "person_1", "to": "chair_1"}}
+   - monitor next to monitor: {{"type": "next_to", "from": "monitor_1", "to": "monitor_2"}}
 
 5. Entity IDs should be descriptive like "chair_1", "table_main", "lamp_desk"
 
@@ -93,35 +111,52 @@ RETURN VALID JSON with this exact structure:
       {{"name": "attr_name", "value_type": "string"}}
     ],
     "new_relation_types": [
-      {{"name": "relation_name", "roles": [{{"name": "role1", "players": ["type1"]}}, {{"name": "role2", "players": ["type2"]}}]}}
+      {{"name": "relation_name", "parent": "spatial_relation"}}
     ],
     "modified_types": [
       {{"name": "existing_type", "add_owns": ["new_attr"], "add_plays": ["new_role"]}}
     ]
   }},
-  "data_requiring_schema_change": [
-    {{"id": "new_entity_id", "type": "new_type", "attributes": {{}}}}
-  ]
+  "data_requiring_schema_change": {{
+    "entities": [
+      {{"id": "new_entity_id", "type": "new_type", "attributes": {{}}}}
+    ],
+    "relations": [
+      {{"type": "new_relation_type", "from": "entity_id", "to": "entity_id"}}
+    ]
+  }}
 }}
 
-Be thorough but only include objects you can clearly identify. Be conservative with schema changes - reuse existing types when reasonable.
+IMPORTANT REMINDERS:
+- Extract ALL visible spatial relationships between objects
+- Relations are mandatory - every scene should have multiple relations
+- Common scene patterns:
+  * Objects ON surfaces (monitors on desk, cups on table)
+  * People SITTING in/on furniture
+  * Objects NEXT TO each other
+  * Objects UNDER surfaces (computer tower under desk)
+- If you identify 10 entities, you should identify at least 5-10 relations
+
+Be thorough but only include objects and relations you can clearly identify. Be conservative with schema changes - reuse existing types when reasonable.
 Return ONLY valid JSON, no other text."""
 
 
 class VisionAnalyzer:
     """Analyze images using Claude's vision capabilities."""
 
-    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-20250514", debug: bool = False):
         """
         Initialize vision analyzer.
 
         Args:
             api_key: Anthropic API key (defaults to ANTHROPIC_API_KEY env var)
             model: Claude model to use for analysis
+            debug: Enable verbose debug logging
         """
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         self.client = None
         self.model = model
+        self.debug = debug
 
     def _ensure_client(self):
         """Lazy initialization of Anthropic client."""
@@ -179,6 +214,17 @@ class VisionAnalyzer:
             "text": prompt
         })
 
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: VISION ANALYZER - PROMPT TO CLAUDE")
+            print("="*80)
+            print(f"Model: {self.model}")
+            print(f"Max tokens: 4096")
+            print(f"Number of images: {len(frames)}")
+            print("\nPrompt text:")
+            print(prompt)
+            print("="*80 + "\n")
+
         # Call Claude API
         response = self.client.messages.create(
             model=self.model,
@@ -190,6 +236,16 @@ class VisionAnalyzer:
 
         # Parse response
         response_text = response.content[0].text
+
+        if self.debug:
+            print("\n" + "="*80)
+            print("DEBUG: VISION ANALYZER - RESPONSE FROM CLAUDE")
+            print("="*80)
+            print(f"Stop reason: {response.stop_reason}")
+            print(f"Usage: {response.usage}")
+            print("\nResponse text:")
+            print(response_text)
+            print("="*80 + "\n")
 
         try:
             # Try to extract JSON from response
@@ -265,12 +321,33 @@ class VisionAnalyzer:
             ))
 
         # Parse data_requiring_schema_change
-        for entity in data.get("data_requiring_schema_change", []):
-            result.pending_entities.append(EntityData(
-                id=entity["id"],
-                type=entity["type"],
-                attributes=entity.get("attributes", {})
-            ))
+        pending_data = data.get("data_requiring_schema_change", [])
+
+        # Handle both old format (list) and new format (dict with entities/relations)
+        if isinstance(pending_data, dict):
+            # New format with entities and relations
+            for entity in pending_data.get("entities", []):
+                result.pending_entities.append(EntityData(
+                    id=entity["id"],
+                    type=entity["type"],
+                    attributes=entity.get("attributes", {})
+                ))
+
+            for relation in pending_data.get("relations", []):
+                result.pending_relations.append(RelationData(
+                    type=relation["type"],
+                    from_entity=relation["from"],
+                    to_entity=relation["to"],
+                    roles=relation.get("roles", {})
+                ))
+        else:
+            # Old format (list of entities only) - for backward compatibility
+            for entity in pending_data:
+                result.pending_entities.append(EntityData(
+                    id=entity["id"],
+                    type=entity["type"],
+                    attributes=entity.get("attributes", {})
+                ))
 
         return result
 

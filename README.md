@@ -66,6 +66,44 @@ python3 main.py load video.mp4 -y
 python3 main.py query "What is in the scene?"
 ```
 
+### Debug Mode
+
+Enable verbose logging to see all Claude API interactions and database queries:
+
+```bash
+# Debug mode shows:
+# - Full prompts sent to Claude API
+# - Complete responses from Claude
+# - Token usage and model parameters
+# - All TypeQL queries executed
+# - Sample database results
+
+# Use with any command:
+python3 main.py --debug query "What monitors are there?"
+python3 main.py --debug extract video.mp4
+python3 main.py --debug load video.mp4 -y
+
+# Example output includes:
+# ================================================================================
+# DEBUG: QUERY TRANSLATOR - PROMPT TO CLAUDE
+# ================================================================================
+# Model: claude-sonnet-4-20250514
+# Max tokens: 1024
+# Question: What monitors are there?
+#
+# Full prompt:
+# [Complete TypeQL reference and question...]
+#
+# ================================================================================
+# DEBUG: QUERY TRANSLATOR - RESPONSE FROM CLAUDE
+# ================================================================================
+# Stop reason: end_turn
+# Usage: Usage(input_tokens=1713, output_tokens=26, ...)
+#
+# Generated TypeQL:
+# match $monitor isa monitor; fetch { "name": $monitor.name };
+```
+
 ### Other Commands
 
 ```bash
