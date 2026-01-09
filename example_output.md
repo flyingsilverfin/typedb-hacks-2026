@@ -349,5 +349,38 @@ Found 1 results:
 
 
 # Find spatial relationships
-python3 main.py query "What is the person on the right wearing?"
+>> python3 main.py query "What is the person on the right wearing?"
+
+# NOTE: invalid query
+
+TypeQL:
+match
+  $person isa person;
+  $right_pos isa position, has direction "right";
+  spatial_location (subject: $person, reference: $right_pos);
+  $clothing isa clothing;
+  wearing (wearer: $person, worn_item: $clothing);
+  $clothing has name $clothing_name;
+fetch {
+  "clothing": $clothing_name
+};
+
+Error: 
+[INF2] Type label 'position' not found.
+Caused: [QUA1] Type inference error while compiling query annotations.
+Caused: [QEX8] Error analysing query.
+Near 3:18
+-----
+    match
+      $person isa person;
+-->   $right_pos isa position, has direction "right";
+                     ^
+      spatial_location (subject: $person, reference: $right_pos);
+      $clothing isa clothing;
+-----
+
 ```
+
+-----
+
+So, the agentic query generation is still a mixed bag
