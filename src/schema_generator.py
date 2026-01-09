@@ -304,9 +304,16 @@ class SchemaGenerator:
         add_owns = definition.get("add_owns", [])
         add_plays = definition.get("add_plays", [])
 
+        # Attributes owned by physical_object (inherited by all subtypes)
+        # Don't redeclare these without specialization
+        inherited_owns = {"name", "color", "material", "shape", "size", "position_description", "scene_id"}
+
         parts = []
 
         for attr in add_owns:
+            # Skip if this attribute is inherited from physical_object
+            if attr in inherited_owns:
+                continue
             if attr in self._defined_attributes:
                 parts.append(f"{name} owns {attr};")
 

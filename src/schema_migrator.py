@@ -175,12 +175,18 @@ class SchemaMigrator:
         owns = defn.get("owns", [])
         plays = defn.get("plays", [])
 
+        # Attributes already owned by physical_object - don't redeclare
+        inherited_owns = {"name", "color", "material", "shape", "size", "position_description", "scene_id"}
+
         parts = [f"entity {name}"]
 
         if parent and parent not in ("entity", "thing"):
             parts.append(f"sub {parent}")
 
         for attr in owns:
+            # Skip attributes already owned by parent
+            if attr in inherited_owns and parent == "physical_object":
+                continue
             parts.append(f"owns {attr}")
 
         for role in plays:
@@ -249,8 +255,15 @@ class SchemaMigrator:
         add_owns = defn.get("add_owns", [])
         add_plays = defn.get("add_plays", [])
 
+        # Attributes owned by physical_object (inherited by all subtypes)
+        # Don't redeclare these without specialization
+        inherited_owns = {"name", "color", "material", "shape", "size", "position_description", "scene_id"}
+
         # Each owns/plays addition is a separate define statement
         for attr in add_owns:
+            # Skip if this attribute is inherited from physical_object
+            if attr in inherited_owns:
+                continue
             typeql = f"define {name} owns {attr};"
             operations.append(SchemaOperation(
                 operation=OperationType.DEFINE,
