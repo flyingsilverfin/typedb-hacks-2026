@@ -304,7 +304,10 @@ def load(ctx, video_path, fps, max_frames, scene_id, yes):
             schema_typeql = generator.generate_initial_schema(analysis)
 
             click.echo("\nInitial schema:")
-            click.echo(schema_typeql[:500] + "..." if len(schema_typeql) > 500 else schema_typeql)
+            if debug:
+                click.echo(schema_typeql)
+            else:
+                click.echo(schema_typeql[:500] + "..." if len(schema_typeql) > 500 else schema_typeql)
 
             if not yes:
                 if not click.confirm("\nApply initial schema?"):
@@ -344,6 +347,28 @@ def load(ctx, video_path, fps, max_frames, scene_id, yes):
 
         # Insert data
         click.echo("\nInserting data...")
+
+        # Show insert queries in debug mode
+        if debug:
+            click.echo("\n=== INSERT QUERIES (DEBUG) ===")
+            all_entities = analysis.pending_entities + analysis.new_entities
+
+            for i, entity in enumerate(all_entities, 1):
+                parts = [f"$e isa {entity.type}"]
+                parts.append(f'has name "{entity.id}"')
+                parts.append(f'has scene_id "{scene_id}"')
+
+                for attr_name, attr_value in entity.attributes.items():
+                    if attr_name not in ("name", "scene_id"):
+                        escaped_value = str(attr_value).replace('"', '\\"')
+                        parts.append(f'has {attr_name} "{escaped_value}"')
+
+                query = "insert\n  " + ",\n  ".join(parts) + ";"
+                click.echo(f"\n-- Entity {i}/{len(all_entities)}: {entity.id}")
+                click.echo(query)
+
+            click.echo("\n=== END INSERT QUERIES ===\n")
+
         inserter = DataInserter(client)
         insert_result = inserter.insert_analysis_result(analysis, scene_id)
 
